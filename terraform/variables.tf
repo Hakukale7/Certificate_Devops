@@ -10,7 +10,7 @@ variable "instance_type" {
   default     = "t3.micro"
 }
 
-variable "my_ip" {
-  description = "Your public IP for SSH access (e.g., 1.2.3.4/32)"
-  type        = string
-}
+#variable "my_ip" {
+ # description = "Your public IP for SSH access (e.g., 1.2.3.4/32)"
+  #type        = string
+#}
