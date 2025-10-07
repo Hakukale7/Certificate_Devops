@@ -1,0 +1,107 @@
+---
+- name: Configure Kubernetes cluster
+  hosts: all
+  become: yes
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install Docker
+      apt:
+        name: docker.io
+        state: present
+
+    - name: Start and enable Docker
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Add Kubernetes apt key
+      apt_key:
+        url: https://pkgs.k8s.io/core:/stable:/v1.28/deb/Release.key
+        state: present
+
+    - name: Add Kubernetes apt repository
+      apt_repository:
+        repo: deb http://pkgs.k8s.io/core:/stable:/v1.28/deb/ /
+        state: present
+        filename: kubernetes
+
+    - name: Install Kubernetes tools
+      apt:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - kubelet
+        - kubeadm
+        - kubectl
+
+    - name: Hold Kubernetes packages
+      dpkg_selections:
+        name: "{{ item }}"
+        selection: hold
+      loop:
+        - kubelet
+        - kubeadm
+        - kubectl
+
+- name: Initialize Kubernetes master
+  hosts: ansible_k8s_master
+  become: yes
+  tasks:
+    - name: Initialize Kubernetes cluster
+      command: kubeadm init --pod-network-cidr=10.244.0.0/16
+      args:
+        creates: /etc/kubernetes/admin.conf
+      register: kubeadm_init
+
+    - name: Create .kube directory
+      file:
+        path: /home/ubuntu/.kube
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+
+    - name: Copy admin.conf to user kube config
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /home/ubuntu/.kube/config
+        owner: ubuntu
+        group: ubuntu
+        remote_src: yes
+
+    - name: Install Flannel CNI
+      shell: kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml
+      environment:
+        KUBECONFIG: /home/ubuntu/.kube/config
+
+    - name: Get join command
+      command: kubeadm token create --print-join-command
+      register: join_command
+      changed_when: false
+
+    - name: Save join command
+      copy:
+        content: "{{ join_command.stdout }}"
+        dest: /tmp/join_command.txt
+        owner: ubuntu
+        group: ubuntu
+
+- name: Join worker to Kubernetes cluster
+  hosts: k8s_worker
+  become: yes
+  tasks:
+    - name: Copy join command to worker
+      copy:
+        src: /tmp/join_command.txt
+        dest: /tmp/join_command.txt
+        remote_src: yes
+      delegate_to: ansible_k8s_master
+
+    - name: Join worker to cluster
+      command: "{{ lookup('file', '/tmp/join_command.txt') }}"
+      args:
+        creates: /etc/kubernetes/kubelet.conf
